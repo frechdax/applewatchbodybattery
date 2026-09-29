@@ -1,0 +1,56 @@
+name: AppleWatchBodyBattery
+options:
+  bundleIdPrefix: com.frechdax
+  deploymentTarget:
+    watchOS: "10.0"
+settings:
+  base:
+    SWIFT_VERSION: 5.0
+    DEVELOPMENT_TEAM: ""
+
+targets:
+  BodyBatteryComplication:
+    type: app-extension
+    platform: watchOS
+    sources:
+      - path: Shared
+      - path: Complication
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.frechdax.applewatchbodybattery.complication
+        CODE_SIGN_ENTITLEMENTS: Config/Complication.entitlements
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Body Battery
+        INFOPLIST_KEY_NSExtension_NSExtensionPointIdentifier: com.apple.widgetkit-extension
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES
+
+  BodyBatteryWatch:
+    type: application
+    platform: watchOS
+    sources:
+      - path: Shared
+      - path: WatchApp
+    dependencies:
+      - target: BodyBatteryComplication
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.frechdax.applewatchbodybattery
+        PRODUCT_NAME: Body Battery
+        CODE_SIGN_ENTITLEMENTS: Config/WatchApp.entitlements
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Body Battery
+        INFOPLIST_KEY_NSHealthShareUsageDescription: Body Battery nutzt Schlaf, HRV, Ruhepuls, Aktivität und Trainingsdaten, um deinen persönlichen Energie-Score zu berechnen.
+        INFOPLIST_KEY_WKApplication: YES
+        INFOPLIST_KEY_WKWatchOnly: YES
+        TARGETED_DEVICE_FAMILY: 4
+
+schemes:
+  BodyBatteryWatch:
+    build:
+      targets:
+        BodyBatteryWatch: all
+        BodyBatteryComplication: all
+    run:
+      config: Debug
