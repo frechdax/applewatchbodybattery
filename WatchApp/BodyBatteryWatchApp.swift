@@ -8,6 +8,9 @@ struct BodyBatteryWatchApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(health)
+                .task {
+                    await health.prepareBackgroundUpdates()
+                }
         }
     }
 }
