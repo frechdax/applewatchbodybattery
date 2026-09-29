@@ -24,6 +24,8 @@ final class HealthKitManager: ObservableObject {
     private let healthStore = HKHealthStore()
     private let store = SharedScoreStore()
     private let engine = BodyBatteryScoreEngine()
+    private var observerQueries: [HKObserverQuery] = []
+    private var observersConfigured = false
 
     init() {
         snapshot = store.load()
@@ -37,9 +39,22 @@ final class HealthKitManager: ObservableObject {
 
         do {
             try await requestAuthorization()
+            try await configureBackgroundDelivery()
+            startObserverQueriesIfNeeded()
             await refresh()
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    func prepareBackgroundUpdates() async {
+        guard HKHealthStore.isHealthDataAvailable() else { return }
+        do {
+            try await configureBackgroundDelivery()
+            startObserverQueriesIfNeeded()
+        } catch {
+            // Keep the last known score available even if background delivery
+            // cannot be enabled yet (for example before Health authorization).
         }
     }
 
@@ -60,8 +75,7 @@ final class HealthKitManager: ObservableObject {
     }
 
     private func requestAuthorization() async throws {
-        guard let heartRate = HKObjectType.quantityType(forIdentifier: .heartRate),
-              let restingHeartRate = HKObjectType.quantityType(forIdentifier: .restingHeartRate),
+        guard let restingHeartRate = HKObjectType.quantityType(forIdentifier: .restingHeartRate),
               let hrv = HKObjectType.quantityType(forIdentifier: .heartRateVariabilitySDNN),
               let activeEnergy = HKObjectType.quantityType(forIdentifier: .activeEnergyBurned),
               let exerciseTime = HKObjectType.quantityType(forIdentifier: .appleExerciseTime),
@@ -69,8 +83,62 @@ final class HealthKitManager: ObservableObject {
             throw HealthError.missingTypes
         }
 
-        let readTypes: Set<HKObjectType> = [heartRate, restingHeartRate, hrv, activeEnergy, exerciseTime, sleep]
+        let readTypes: Set<HKObjectType> = [restingHeartRate, hrv, activeEnergy, exerciseTime, sleep]
         try await healthStore.requestAuthorization(toShare: [], read: readTypes)
+    }
+
+    private func backgroundObservedTypes() throws -> [HKSampleType] {
+        guard let restingHeartRate = HKObjectType.quantityType(forIdentifier: .restingHeartRate),
+              let hrv = HKObjectType.quantityType(forIdentifier: .heartRateVariabilitySDNN),
+              let activeEnergy = HKObjectType.quantityType(forIdentifier: .activeEnergyBurned),
+              let exerciseTime = HKObjectType.quantityType(forIdentifier: .appleExerciseTime),
+              let sleep = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else {
+            throw HealthError.missingTypes
+        }
+        return [restingHeartRate, hrv, activeEnergy, exerciseTime, sleep]
+    }
+
+    private func configureBackgroundDelivery() async throws {
+        let types = try backgroundObservedTypes()
+
+        for type in types {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                healthStore.enableBackgroundDelivery(for: type, frequency: .hourly) { success, error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                    } else if success {
+                        continuation.resume()
+                    } else {
+                        continuation.resume(throwing: HealthError.unavailable)
+                    }
+                }
+            }
+        }
+    }
+
+    private func startObserverQueriesIfNeeded() {
+        guard !observersConfigured, let types = try? backgroundObservedTypes() else { return }
+        observersConfigured = true
+
+        for type in types {
+            let query = HKObserverQuery(sampleType: type, predicate: nil) { [weak self] _, completion, error in
+                guard error == nil else {
+                    completion()
+                    return
+                }
+
+                Task { @MainActor [weak self] in
+                    guard let self else {
+                        completion()
+                        return
+                    }
+                    await self.refresh()
+                    completion()
+                }
+            }
+            observerQueries.append(query)
+            healthStore.execute(query)
+        }
     }
 
     private func loadMetrics() async throws -> HealthMetrics {
